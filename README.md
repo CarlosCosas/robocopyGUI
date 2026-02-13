@@ -47,8 +47,6 @@ The GUI allows you to:
 4. **Adjust threading** - Set Robocopy threads (MT) and parallel folder limit
 5. **Execute** - Run the backup operation
 
-**Note:** The GUI interface is in Spanish.
-
 ### Command-Line Interface
 
 For direct command-line usage or automation:

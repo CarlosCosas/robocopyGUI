@@ -94,7 +94,7 @@ Complete execution with log and JSON export:
 .\script.ps1 C:\Dir1 C:\Dir2 D:\Backup -Parallel -Log -ExportJson
 
 .NOTES
-Version: 2.0 Enterprise
+Version: 2.1.0
 Requires: Windows PowerShell 5.1 or PowerShell 7+
 Robocopy must be available on the system.
 
@@ -110,7 +110,7 @@ https://learn.microsoft.com/windows-server/administration/windows-commands/roboc
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true, Position = 0, ValueFromRemainingArguments = $true)]
+    [Parameter(Mandatory = $false, Position = 0, ValueFromRemainingArguments = $true)]
     [string[]]$Paths,
 
     [switch]$Log,
@@ -124,8 +124,27 @@ param(
     [int]$MT = 16,
 
     [ValidateRange(1,32)]
-    [int]$ThrottleLimit = 4
+    [int]$ThrottleLimit = 4,
+
+    [switch]$Version
 )
+
+# =========================
+# Script Version
+# =========================
+$ScriptVersion = "2.1.0"
+$MinimumGUIVersion = "2.1.0"
+
+# Show version and exit if requested
+if ($Version) {
+    Write-Host "Robocopy Enterprise Script v$ScriptVersion"
+    exit 0
+}
+
+# Validate Paths is provided when not using -Version
+if ($null -eq $Paths -or $Paths.Count -eq 0) {
+    Throw "You must specify at least one source folder and one destination folder. Use -Version to display version information."
+}
 
 # =========================
 # Function: Long Path Support
@@ -151,8 +170,51 @@ $StartTime = Get-Date
 $DestinationRoot = $Paths[-1]
 $SourceFolders = $Paths[0..($Paths.Count - 2)]
 
+# =========================
+# Parameter Validation
+# =========================
+
+# Validate all source folders exist
+$MissingFolders = @()
+foreach ($Source in $SourceFolders) {
+    if (!(Test-Path $Source -PathType Container)) {
+        $MissingFolders += $Source
+    }
+}
+
+if ($MissingFolders.Count -gt 0) {
+    $ErrorMessage = "The following source folders do not exist:`n" + ($MissingFolders -join "`n")
+    Throw $ErrorMessage
+}
+
+# Validate destination path
+if ($DestinationRoot -match '[\*\?\<\>\|]') {
+    Throw "Destination path contains invalid characters: $DestinationRoot"
+}
+
+# Warn about parameter conflicts
+if ($DryRun -and $Validate) {
+    Write-Warning "Both -DryRun and -Validate are specified. -DryRun takes precedence."
+}
+
+if ($Validate -and $FailFast) {
+    Write-Warning "-FailFast has no effect in -Validate mode (no actual copying occurs)."
+}
+
+# Create destination if it doesn't exist
 if (!(Test-Path $DestinationRoot)) {
-    New-Item -ItemType Directory -Path $DestinationRoot | Out-Null
+    try {
+        New-Item -ItemType Directory -Path $DestinationRoot -ErrorAction Stop | Out-Null
+        Write-Verbose "Created destination directory: $DestinationRoot"
+    }
+    catch {
+        Throw "Failed to create destination directory '$DestinationRoot': $_"
+    }
+}
+
+# Validate destination is a directory
+if (!(Test-Path $DestinationRoot -PathType Container)) {
+    Throw "Destination path exists but is not a directory: $DestinationRoot"
 }
 
 $DestinationRoot = Convert-ToLongPath $DestinationRoot
@@ -260,7 +322,7 @@ $Summary = [PSCustomObject]@{
     Failed       = $Failed
     Duration     = $Duration.ToString()
     Timestamp    = $EndTime
-    Version      = "2.0 Enterprise"
+    Version      = $ScriptVersion
 }
 
 # =========================

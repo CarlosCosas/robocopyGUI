@@ -8,10 +8,17 @@ without needing to use command line parameters.
 
 .NOTES
 Requires: robocopy.ps1 in the same directory
+Version: 2.1.0
 #>
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+
+# =========================
+# Version Information
+# =========================
+$GUIVersion = "2.1.0"
+$RequiredCLIVersion = "2.1.0"
 
 # Get script directory
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -28,9 +35,88 @@ if (!(Test-Path $RobocopyScript)) {
     exit
 }
 
+# =========================
+# Version Compatibility Check
+# =========================
+function Get-RobocopyScriptVersion {
+    param([string]$ScriptPath)
+
+    try {
+        # Execute script with -Version flag to get version
+        $VersionOutput = & PowerShell -NoProfile -ExecutionPolicy Bypass -File $ScriptPath -Version 2>&1
+
+        # Parse version from output (format: "Robocopy Enterprise Script vX.Y.Z")
+        if ($VersionOutput -match 'v(\d+\.\d+\.\d+)') {
+            return $matches[1]
+        }
+
+        # Fallback: Try to read version from script content
+        $Content = Get-Content $ScriptPath -Raw
+        if ($Content -match '\$ScriptVersion\s*=\s*[''"](\d+\.\d+\.\d+)[''"]') {
+            return $matches[1]
+        }
+
+        return $null
+    }
+    catch {
+        return $null
+    }
+}
+
+function Test-VersionCompatibility {
+    param(
+        [string]$Required,
+        [string]$Actual
+    )
+
+    if ([string]::IsNullOrEmpty($Actual)) {
+        return $false
+    }
+
+    $ReqParts = $Required.Split('.')
+    $ActParts = $Actual.Split('.')
+
+    # Check major version (must match)
+    if ($ActParts[0] -ne $ReqParts[0]) {
+        return $false
+    }
+
+    # Check minor version (actual must be >= required)
+    if ([int]$ActParts[1] -lt [int]$ReqParts[1]) {
+        return $false
+    }
+
+    return $true
+}
+
+# Check CLI version
+$CLIVersion = Get-RobocopyScriptVersion -ScriptPath $RobocopyScript
+
+if ([string]::IsNullOrEmpty($CLIVersion)) {
+    $result = [System.Windows.Forms.MessageBox]::Show(
+        "Cannot determine robocopy.ps1 version.`n`nThis may indicate an incompatible or corrupted script file.`n`nContinue anyway?",
+        "Version Warning",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Warning
+    )
+
+    if ($result -eq "No") {
+        exit
+    }
+}
+elseif (!(Test-VersionCompatibility -Required $RequiredCLIVersion -Actual $CLIVersion)) {
+    [System.Windows.Forms.MessageBox]::Show(
+        "Version mismatch detected!`n`nGUI Version: $GUIVersion`nCLI Version: $CLIVersion`nRequired CLI Version: $RequiredCLIVersion`n`nPlease ensure both files are from the same release.",
+        "Version Mismatch",
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Error
+    )
+    exit
+}
+
 # Create form
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Robocopy Enterprise GUI"
+$form.Text = "Robocopy Enterprise GUI v$GUIVersion"
 $form.Size = New-Object System.Drawing.Size(600, 550)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"

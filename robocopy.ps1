@@ -152,6 +152,10 @@ if ($null -eq $Paths -or $Paths.Count -eq 0) {
 function Convert-ToLongPath {
     param([string]$Path)
 
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Cannot convert empty path to long path format"
+    }
+
     if ($Path -like "\\?\*") { return $Path }
 
     $full = (Resolve-Path $Path).Path
@@ -217,7 +221,8 @@ if (!(Test-Path $DestinationRoot -PathType Container)) {
     Throw "Destination path exists but is not a directory: $DestinationRoot"
 }
 
-$DestinationRoot = Convert-ToLongPath $DestinationRoot
+# Note: We don't convert to long path format here because Robocopy
+# doesn't work well with \\?\ prefix. The scriptblock will handle paths directly.
 
 $LogFile = Join-Path $PSScriptRoot "robocopy.log"
 $Results = @()
@@ -228,34 +233,60 @@ $Results = @()
 $ScriptBlock = {
     param($Source, $DestinationRoot, $MT, $Log, $DryRun, $Validate, $LogFile)
 
-    function Convert-ToLongPathLocal {
-        param([string]$Path)
-        if ($Path -like "\\?\*") { return $Path }
-        $full = (Resolve-Path $Path).Path
-        return "\\?\$full"
+    # Validate source is not empty
+    if ([string]::IsNullOrWhiteSpace($Source)) {
+        throw "Source path is empty or null"
     }
 
+    # Validate destination root is not empty
+    if ([string]::IsNullOrWhiteSpace($DestinationRoot)) {
+        throw "Destination root is empty or null"
+    }
+
+    # Get folder name and validate it's not empty
     $FolderName = Split-Path $Source -Leaf
+
+    if ([string]::IsNullOrWhiteSpace($FolderName)) {
+        # Handle case where source is a drive root (e.g., C:\)
+        # Extract drive letter or use a fallback name
+        if ($Source -match '^([A-Z]):\\?$') {
+            $FolderName = "Drive_$($matches[1])"
+        } else {
+            throw "Cannot extract folder name from source path: $Source"
+        }
+    }
+
+    # Build destination path
     $Destination = Join-Path $DestinationRoot $FolderName
 
-    $SourceLong = Convert-ToLongPathLocal $Source
-    $DestLong   = Convert-ToLongPathLocal $Destination
+    # Normalize paths: remove trailing backslash for Robocopy
+    # Robocopy works best with clean paths without trailing backslashes
+    $SourceClean = $Source.TrimEnd('\')
+    $DestClean = $Destination.TrimEnd('\')
 
     $Params = @(
-        "`"$SourceLong`"",
-        "`"$DestLong`"",
-        "/XJ",
-        "/XF", "desktop.ini",
+        "`"$SourceClean`"",
+        "`"$DestClean`"",
+        "/E",              # Copy subdirectories, including empty ones
+        "/XJ",             # Exclude junction points (reparse points)
+        "/XF", "desktop.ini", "Thumbs.db", "*.tmp", "~*",  # Exclude system/temp files
+        "/XD", "`$RECYCLE.BIN", "System Volume Information", "node_modules", "site-packages",  # Exclude system and dependency directories
         "/MT:$MT",
         "/R:2",
         "/W:2",
         "/NP"
     )
 
-    if ($Validate) { $Params += "/L" }
-    elseif (-not $DryRun) { $Params += "/MIR" }
+    if ($Validate) {
+        $Params += "/L"    # List only mode for validation
+    }
+    elseif (-not $DryRun) {
+        $Params += "/MIR"  # Mirror mode (includes /E and /PURGE)
+    }
 
-    if ($DryRun) { $Params += "/L" }
+    if ($DryRun) {
+        $Params += "/L"    # List only mode for dry run
+    }
 
     if ($Log) { $Params += "/LOG+:`"$LogFile`"" }
 

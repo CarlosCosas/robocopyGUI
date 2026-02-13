@@ -304,10 +304,33 @@ $ScriptBlock = {
 # =========================
 if ($Parallel) {
 
-    $Results = $SourceFolders | ForEach-Object -Parallel {
-        & $using:ScriptBlock $_ $using:DestinationRoot $using:MT `
-            $using:Log $using:DryRun $using:Validate $using:LogFile
-    } -ThrottleLimit $ThrottleLimit
+    # Check PowerShell version for parallel execution support
+    if ($PSVersionTable.PSVersion.Major -ge 7) {
+        # PowerShell 7+ supports ForEach-Object -Parallel
+        $Results = $SourceFolders | ForEach-Object -Parallel {
+            & $using:ScriptBlock $_ $using:DestinationRoot $using:MT `
+                $using:Log $using:DryRun $using:Validate $using:LogFile
+        } -ThrottleLimit $ThrottleLimit
+    }
+    else {
+        # PowerShell 5.1: Use Start-Job for parallel execution
+        Write-Warning "PowerShell 5.1 detected. Using Start-Job for parallel execution (slower than PowerShell 7+)."
+
+        $Jobs = @()
+        foreach ($Source in $SourceFolders) {
+            $Job = Start-Job -ScriptBlock $ScriptBlock -ArgumentList $Source, $DestinationRoot, $MT, $Log, $DryRun, $Validate, $LogFile
+            $Jobs += $Job
+
+            # Throttle: wait if we've reached the limit
+            while (($Jobs | Where-Object { $_.State -eq 'Running' }).Count -ge $ThrottleLimit) {
+                Start-Sleep -Milliseconds 100
+            }
+        }
+
+        # Wait for all jobs to complete and collect results
+        $Results = $Jobs | Wait-Job | Receive-Job
+        $Jobs | Remove-Job
+    }
 
 }
 else {

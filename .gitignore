@@ -48,3 +48,4 @@ desktop.ini
 # Pester test cache
 testResults.xml
 coverage.xml
+/robocopy-summary.json

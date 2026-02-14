@@ -1,6 +1,11 @@
-# Robocopy GUI
+# Enterprise Backup GUI
 
-A PowerShell-based graphical user interface for creating rsync-style backups on Windows 10/11 using Robocopy. This tool provides both a user-friendly GUI and a powerful command-line interface for enterprise-grade file synchronization and backup operations.
+Cross-platform graphical user interface for creating enterprise-grade backups with mirror synchronization.
+
+- **Windows**: PowerShell-based GUI using Robocopy
+- **Linux**: Bash/Zenity-based GUI using rsync
+
+Both versions provide a user-friendly GUI and powerful command-line interface for file synchronization and backup operations.
 
 ## Features
 
@@ -19,58 +24,100 @@ A PowerShell-based graphical user interface for creating rsync-style backups on 
   - Excluded directories: $RECYCLE.BIN, System Volume Information, node_modules, site-packages
   - Junction points (via /XJ flag)
 
-## Requirements
+## Platform-Specific Information
 
+### Windows Version
+
+**Files**: `robocopy-gui.ps1`, `robocopy.ps1`
+
+**Requirements**:
 - Windows 10 or Windows 11
 - Windows PowerShell 5.1 or PowerShell 7+
 - Robocopy.exe (included in Windows)
 - .NET Framework (for Windows Forms GUI)
 
-## Installation
-
+**Installation**:
 1. Clone or download this repository
 2. Ensure both `robocopy-gui.ps1` and `robocopy.ps1` are in the same directory
 3. No additional installation required
 
+### Linux Version
+
+**Files**: `rsync-gui.sh`, `rsync-backup.sh`
+
+**Requirements**:
+- Linux (any modern distribution)
+- Bash 4.0+
+- rsync
+- Zenity (for GUI)
+
+**Installation**:
+```bash
+# Install dependencies (Ubuntu/Debian)
+sudo apt install rsync zenity
+
+# Install dependencies (Fedora/RHEL)
+sudo dnf install rsync zenity
+
+# Install dependencies (Arch)
+sudo pacman -S rsync zenity
+
+# Make scripts executable
+chmod +x rsync-gui.sh rsync-backup.sh
+```
+
 ### Version Compatibility
 
-The GUI and CLI scripts include version checking to ensure compatibility:
-- **GUI Version**: Each `robocopy-gui.ps1` release has a version number (currently 2.1.0)
-- **CLI Version**: Each `robocopy.ps1` release has a version number (currently 2.1.0)
-- On startup, the GUI automatically validates that the CLI script version meets the minimum requirement
-- If versions are incompatible, the GUI will display an error and refuse to launch
-- You can check the CLI version manually with: `.\robocopy.ps1 -Version`
+Both Windows and Linux versions include version checking to ensure GUI/CLI compatibility:
 
-⚠️ **Important**: Always keep both scripts from the same release to avoid compatibility issues.
+**Windows**:
+- **GUI Version**: `robocopy-gui.ps1` v2.1.0
+- **CLI Version**: `robocopy.ps1` v2.1.0
+- Check version: `.\robocopy.ps1 -Version`
+
+**Linux**:
+- **GUI Version**: `rsync-gui.sh` v1.0.0
+- **CLI Version**: `rsync-backup.sh` v1.0.0
+- Check version: `./rsync-backup.sh --version`
+
+⚠️ **Important**: Always keep both scripts (GUI and CLI) from the same release to avoid compatibility issues.
 
 ## Usage
 
 ### GUI Application
 
-Launch the graphical interface:
-
+**Windows**:
 ```powershell
 .\robocopy-gui.ps1
+```
+
+**Linux**:
+```bash
+./rsync-gui.sh
 ```
 
 The GUI allows you to:
 1. **Add source folders** - Select multiple folders to backup
 2. **Select destination** - Choose where to store the backup
 3. **Configure options** - Enable dry run, validation, parallel execution, logging, etc.
-4. **Adjust threading** - Set Robocopy threads (MT) and parallel folder limit
+4. **Adjust settings** - Configure threading (Windows) or parallel limit (Linux)
 5. **Execute** - Run the backup operation
 
 ### Command-Line Interface
 
-For direct command-line usage or automation:
-
+**Windows**:
 ```powershell
 .\robocopy.ps1 <source1> [source2] [...] <destination> [options]
 ```
 
+**Linux**:
+```bash
+./rsync-backup.sh <source1> [source2] [...] <destination> [options]
+```
+
 **Important:** The last path is always treated as the destination; all preceding paths are source folders.
 
-#### Parameters
+#### Windows Parameters (robocopy.ps1)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -85,7 +132,25 @@ For direct command-line usage or automation:
 | `-MT` | int | 16 | Robocopy multithreading level (1-128) |
 | `-ThrottleLimit` | int | 4 | Max parallel folders when using `-Parallel` (1-32) |
 
+#### Linux Parameters (rsync-backup.sh)
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `paths` | positional | (required) | Source folders followed by destination folder |
+| `--version` | flag | - | Display script version and exit |
+| `--help` | flag | - | Display help message |
+| `--log` | flag | off | Enable cumulative logging to `rsync.log` |
+| `--dry-run` | flag | off | Simulate execution without copying files |
+| `--validate` | flag | off | Validation mode - analyze differences only |
+| `--parallel` | flag | off | Execute folders in parallel |
+| `--fail-fast` | flag | off | Stop on critical errors |
+| `--export-json` | flag | off | Export summary to `rsync-summary.json` |
+| `--throttle N` | int | 4 | Max parallel folders when using `--parallel` |
+| `--no-delete` | flag | off | Disable mirror mode (don't delete extra files) |
+
 ### Examples
+
+#### Windows Examples
 
 **Check script version:**
 ```powershell
@@ -117,14 +182,43 @@ For direct command-line usage or automation:
 .\robocopy.ps1 C:\Data C:\Projects D:\Backup -Parallel -MT 32 -ThrottleLimit 8 -Log -ExportJson
 ```
 
-**Fail-fast mode for critical operations:**
-```powershell
-.\robocopy.ps1 C:\Important D:\Backup -FailFast -Log
+#### Linux Examples
+
+**Check script version:**
+```bash
+./rsync-backup.sh --version
+```
+
+**Basic mirror backup:**
+```bash
+./rsync-backup.sh /home/user/documents /home/user/projects /backup
+```
+
+**Validation before actual copy:**
+```bash
+./rsync-backup.sh /home/user/documents /backup --validate
+```
+
+**Dry run simulation:**
+```bash
+./rsync-backup.sh /home/user/documents /backup --dry-run
+```
+
+**Parallel execution with logging:**
+```bash
+./rsync-backup.sh /data/dir1 /data/dir2 /data/dir3 /backup --parallel --log
+```
+
+**Sync without deleting (disable mirror mode):**
+```bash
+./rsync-backup.sh /home/user/docs /backup --no-delete --log --export-json
 ```
 
 ## How It Works
 
 ### Architecture
+
+#### Windows Implementation
 
 - **robocopy.ps1** - Core engine that orchestrates Robocopy operations
   - Accepts multiple source folders and one destination
@@ -133,14 +227,28 @@ For direct command-line usage or automation:
   - Note: Robocopy natively handles most long paths (>260 characters) without special prefixes
 
 - **robocopy-gui.ps1** - Windows Forms GUI wrapper
-  - Provides user-friendly interface
+  - Provides user-friendly interface using System.Windows.Forms
   - Validates inputs before execution
   - Builds command-line arguments from GUI controls
   - Launches robocopy.ps1 in separate PowerShell window
 
-### Robocopy Options Used
+#### Linux Implementation
 
-The script automatically configures Robocopy with:
+- **rsync-backup.sh** - Core engine that orchestrates rsync operations
+  - Accepts multiple source folders and one destination
+  - Supports parallel processing using GNU parallel or xargs
+  - Generates structured output as JSON
+  - Uses rsync's native capabilities for reliable synchronization
+
+- **rsync-gui.sh** - Zenity-based GUI wrapper
+  - Provides user-friendly interface using Zenity dialogs
+  - Validates inputs before execution
+  - Builds command-line arguments from user selections
+  - Launches rsync-backup.sh in terminal (gnome-terminal, xterm, or konsole)
+
+### Windows: Robocopy Options Used
+
+The Windows script automatically configures Robocopy with:
 - `/E` - Copy subdirectories, including empty ones
 - `/MIR` - Mirror mode (when not in Validate or DryRun)
   - ⚠️ **WARNING**: Mirror mode **DELETES files in the destination** that don't exist in the source(s)
@@ -164,32 +272,69 @@ The script automatically configures Robocopy with:
 - `/NP` - No progress percentage in log
 - `/L` - List only (for DryRun and Validate modes)
 
+### Linux: rsync Options Used
+
+The Linux script automatically configures rsync with:
+- `-a` - Archive mode (preserves permissions, timestamps, symbolic links)
+- `-v` - Verbose output
+- `--progress` - Show progress during transfer
+- `--delete` - Mirror mode (when not in Validate or DryRun, unless `--no-delete` is specified)
+  - ⚠️ **WARNING**: Mirror mode **DELETES files in the destination** that don't exist in the source(s)
+  - This ensures the destination is an exact mirror of the source
+  - Always use `--validate` or `--dry-run` first to preview changes
+- `--exclude` - File and directory exclusions (fixed, not configurable):
+  - Files: `desktop.ini`, `Thumbs.db`, `*.tmp`, `~*`
+  - Directories: `$RECYCLE.BIN`, `System Volume Information`, `node_modules`, `site-packages`, `.git`
+- `--dry-run` - Simulation mode (for DryRun and Validate modes)
+- `--log-file` - Logging to file (when `--log` is specified)
+
 ### Exit Codes
 
-The script follows Robocopy exit code conventions:
+**Windows (Robocopy)**:
 - **0-1**: No changes / OK
 - **2-3**: Files copied successfully
 - **4-7**: Warnings (some files not copied)
 - **>7**: Errors occurred
 
+**Linux (rsync)**:
+- **0**: Success
+- **1-3**: Warnings (some files not transferred)
+- **>3**: Errors occurred
+
 ## Output Files
 
-When enabled, the script generates:
-- **robocopy.log** - Cumulative log file (with `-Log` flag)
-- **robocopy-summary.json** - Structured execution summary (with `-ExportJson` flag)
+When enabled, the scripts generate:
 
-Both files are created in the same directory as the script.
+**Windows**:
+- `robocopy.log` - Cumulative log file (with `-Log` flag)
+- `robocopy-summary.json` - Structured execution summary (with `-ExportJson` flag)
+
+**Linux**:
+- `rsync.log` - Cumulative log file (with `--log` flag)
+- `rsync-summary.json` - Structured execution summary (with `--export-json` flag)
+
+All output files are created in the same directory as the script.
 
 ## Best Practices
 
-1. **⚠️ Test First** - **ALWAYS** use `-Validate` or `-DryRun` before running actual mirror operations
-   - Mirror mode (`/MIR`) will delete files in the destination that don't exist in source
+1. **⚠️ Test First** - **ALWAYS** use validation/dry-run before running actual mirror operations
+   - Windows: `-Validate` or `-DryRun`
+   - Linux: `--validate` or `--dry-run`
+   - Mirror mode will delete files in the destination that don't exist in source
    - Preview operations first to avoid accidental data loss
-2. **Use Logging** - Enable `-Log` for production backups to track operations
-3. **Parallel for Multiple Sources** - Use `-Parallel` when backing up multiple large folders
-4. **Adjust Threading** - Increase `-MT` for large file operations on fast storage
-5. **Monitor Exit Codes** - Use `-FailFast` for critical operations where errors must stop execution
-6. **Keep Scripts in Sync** - Always use both `robocopy-gui.ps1` and `robocopy.ps1` from the same release
+2. **Use Logging** - Enable logging for production backups to track operations
+   - Windows: `-Log`
+   - Linux: `--log`
+3. **Parallel for Multiple Sources** - Use parallel mode when backing up multiple large folders
+   - Windows: `-Parallel`
+   - Linux: `--parallel`
+4. **Adjust Performance Settings**
+   - Windows: Increase `-MT` for large file operations on fast storage
+   - Linux: Adjust `--throttle` for optimal parallel performance
+5. **Monitor Exit Codes** - Use fail-fast mode for critical operations
+   - Windows: `-FailFast`
+   - Linux: `--fail-fast`
+6. **Keep Scripts in Sync** - Always use both GUI and CLI scripts from the same release
 
 ## License
 

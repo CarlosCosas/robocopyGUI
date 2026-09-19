@@ -130,8 +130,8 @@ Because of that naming, two different sources with the same folder name (for exa
 | `-Paths` | string[] | (required) | Source folders followed by destination folder |
 | `-Version` | switch | off | Display script version and exit |
 | `-Log` | switch | off | Enable cumulative logging to `robocopy.log` |
-| `-DryRun` | switch | off | Simulate execution without copying files |
-| `-Validate` | switch | off | Validation mode - analyze differences only |
+| `-DryRun` | switch | off | Preview only: lists what would be copied **and deleted**, changes nothing |
+| `-Validate` | switch | off | Same as `-DryRun` |
 | `-Parallel` | switch | off | Execute folders in parallel using runspaces |
 | `-FailFast` | switch | off | Stop on critical errors (exit code > 7) |
 | `-ExportJson` | switch | off | Export summary to `robocopy-summary.json` |
@@ -293,11 +293,12 @@ Up to `-MaxListed` problems are listed individually; beyond that you get a perce
 
 The Windows script automatically configures Robocopy with:
 - `/E` - Copy subdirectories, including empty ones
-- `/MIR` - Mirror mode (when not in Validate or DryRun)
+- `/MIR` - Mirror mode, always applied
   - ⚠️ **WARNING**: Mirror mode **DELETES files in the destination** that don't exist in the source(s)
   - This ensures the destination is an exact mirror of the source
   - Always use `-Validate` or `-DryRun` first to preview changes
   - Note: `/MIR` includes `/E` (subdirectories) and `/PURGE` (delete extra files)
+  - `/MIR` stays on in preview modes too, so the preview lists the files that **would be deleted** (marked `*EXTRA`) alongside those that would be copied. `/L` is what makes a preview harmless — nothing is written either way.
 - `/XJ` - Exclude junction points (reparse points)
 - `/XF` - Exclude files (fixed exclusions, not configurable):
   - `desktop.ini` - Windows folder customization file

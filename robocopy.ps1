@@ -258,7 +258,7 @@ if ($DestinationRoot -match '[\*\?\<\>\|]') {
 
 # Warn about parameter conflicts
 if ($DryRun -and $Validate) {
-    Write-Warning "Both -DryRun and -Validate are specified. -DryRun takes precedence."
+    Write-Warning "Both -DryRun and -Validate are specified. They are equivalent: both preview without changing anything."
 }
 
 if ($Validate -and $FailFast) {
@@ -331,15 +331,16 @@ $ScriptBlock = {
         "/NP"
     )
 
-    if ($Validate) {
-        $Params += "/L"    # List only mode for validation
-    }
-    elseif (-not $DryRun) {
-        $Params += "/MIR"  # Mirror mode (includes /E and /PURGE)
-    }
+    # /MIR is always present, including in preview modes. Without it a preview
+    # runs without /PURGE and so reports only what would be copied, staying
+    # silent about the destination files a real run would delete - the half of
+    # the operation a preview exists to warn about. /L makes robocopy list its
+    # intentions and write nothing, so extras are reported as *EXTRA rather
+    # than removed.
+    $Params += "/MIR"          # Mirror mode (includes /E and /PURGE)
 
-    if ($DryRun) {
-        $Params += "/L"    # List only mode for dry run
+    if ($DryRun -or $Validate) {
+        $Params += "/L"        # List only: report, change nothing
     }
 
     if ($Log) { $Params += "/LOG+:`"$LogFile`"" }

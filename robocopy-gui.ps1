@@ -114,6 +114,25 @@ elseif (!(Test-VersionCompatibility -Required $RequiredCLIVersion -Actual $CLIVe
     exit
 }
 
+# =========================
+# Argument Quoting
+# =========================
+function ConvertTo-QuotedArgument {
+    <#
+    .SYNOPSIS
+    Quotes a path for powershell.exe's argv parser.
+
+    .DESCRIPTION
+    Backslashes immediately before a closing quote are treated as escapes, so a
+    path ending in '\' (a drive root, as returned by FolderBrowserDialog) would
+    swallow the quote and corrupt every argument that follows. Doubling the
+    trailing run of backslashes makes it survive intact.
+    #>
+    param([string]$Path)
+
+    '"' + ($Path -replace '(\\*)$', '$1$1') + '"'
+}
+
 # Create form
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Robocopy Enterprise GUI v$GUIVersion"
@@ -292,11 +311,11 @@ $btnExecute.Add_Click({
     
     # Add all source folders
     foreach ($source in $listSource.Items) {
-        $params += "`"$source`""
+        $params += ConvertTo-QuotedArgument $source
     }
-    
+
     # Add destination
-    $params += "`"$($txtDestination.Text)`""
+    $params += ConvertTo-QuotedArgument $txtDestination.Text
     
     # Add switches
     if ($chkDryRun.Checked) { $params += "-DryRun" }
@@ -312,8 +331,13 @@ $btnExecute.Add_Click({
     $params += "-ThrottleLimit"
     $params += $numThrottle.Value
     
-    # Build command string
-    $command = "& `"$RobocopyScript`" " + ($params -join " ")
+    # Build the argument line for PowerShell's own parser. -File is used rather
+    # than -Command so the quoted paths are parsed once, by PowerShell, instead
+    # of being re-parsed by an outer cmd.exe /c -Command string.
+    # -NoProfile matches the version probe above: a user profile that writes to
+    # the pipeline or changes preferences must not alter the backup run.
+    $argumentLine = "-NoExit -NoProfile -ExecutionPolicy Bypass -File `"$RobocopyScript`" " + ($params -join " ")
+    $command = "powershell.exe $argumentLine"
 
     # Confirm execution
     $message = "The following will be executed:`n`n$command`n`nContinue?"
@@ -326,8 +350,7 @@ $btnExecute.Add_Click({
 
     if ($result -eq "Yes") {
         # Execute in new PowerShell window
-        $psCommand = "PowerShell -NoExit -ExecutionPolicy Bypass -Command `"$command`""
-        Start-Process "cmd.exe" -ArgumentList "/c $psCommand"
+        Start-Process "powershell.exe" -ArgumentList $argumentLine
 
         [System.Windows.Forms.MessageBox]::Show(
             "Script running in PowerShell window.",

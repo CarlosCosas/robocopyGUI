@@ -19,6 +19,7 @@ Both versions provide a user-friendly GUI and powerful command-line interface fo
 - **Comprehensive Logging** - Optional cumulative logging to file
 - **JSON Export** - Export structured summary in JSON format
 - **Fail-Fast Mode** - Stop immediately on critical errors
+- **Collision Protection** - Refuses to run when two different source folders share a name and would overwrite each other in the destination (Windows)
 - **Smart Exclusions** - Automatically excludes system files, temp files, and problematic directories (hardcoded, not configurable)
   - Excluded files: desktop.ini, Thumbs.db, *.tmp, ~*
   - Excluded directories: $RECYCLE.BIN, System Volume Information, node_modules, site-packages
@@ -116,6 +117,10 @@ The GUI allows you to:
 ```
 
 **Important:** The last path is always treated as the destination; all preceding paths are source folders.
+
+Each source is copied into a subfolder of the destination named after the source folder, so `C:\Documents D:\Backup` produces `D:\Backup\Documents`. On Windows a drive root becomes `Drive_<letter>` — `C:\` produces `D:\Backup\Drive_C`.
+
+Because of that naming, two different sources with the same folder name (for example `C:\projA\docs` and `C:\projB\docs`) would both target `D:\Backup\docs`, and in mirror mode the second would delete what the first copied. The Windows script detects this and refuses to run; under `-Validate` or `-DryRun` it warns instead, since those modes never delete. Listing the same folder twice is harmless — the duplicate is simply ignored.
 
 #### Windows Parameters (robocopy.ps1)
 
@@ -230,7 +235,7 @@ The GUI allows you to:
   - Provides user-friendly interface using System.Windows.Forms
   - Validates inputs before execution
   - Builds command-line arguments from GUI controls
-  - Launches robocopy.ps1 in separate PowerShell window
+  - Launches robocopy.ps1 in a separate PowerShell window via `Start-Process ... -File -NoProfile`, so paths containing spaces, drive roots such as `C:\`, and folder names containing shell metacharacters are passed through intact
 
 #### Linux Implementation
 
@@ -290,11 +295,27 @@ The Linux script automatically configures rsync with:
 
 ### Exit Codes
 
-**Windows (Robocopy)**:
-- **0-1**: No changes / OK
-- **2-3**: Files copied successfully
-- **4-7**: Warnings (some files not copied)
-- **>7**: Errors occurred
+**Windows (Robocopy)**: Robocopy's exit code is a bitmask — the flags combine, so a code of 3 means "files copied" (1) **and** "extra files present" (2).
+
+| Bit | Value | Meaning |
+|-----|-------|---------|
+| — | 0 | No change; source and destination already match |
+| 1 | 1 | Files were copied |
+| 2 | 2 | Extra files or directories detected in the destination |
+| 3 | 4 | Mismatched files or directories |
+| 4 | 8 | Some files or directories could not be copied |
+| 5 | 16 | Fatal error; no files copied |
+
+The summary groups each folder into exactly one bucket, so the four counts always add up to `TotalFolders`:
+
+| Bucket | Condition | Meaning |
+|--------|-----------|---------|
+| `Success` | code `0` | Nothing needed doing |
+| `Changed` | bit 1 or 2 set | Files copied and/or extras present |
+| `Warnings` | bit 4 set | Mismatches |
+| `Failed` | code >= 8 | Copy failures or a fatal error |
+
+A routine backup that copies files reports them under `Changed`, not `Success` — `Success` means the destination was already up to date.
 
 **Linux (rsync)**:
 - **0**: Success

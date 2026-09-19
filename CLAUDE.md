@@ -4,10 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a PowerShell-based GUI application for creating rsync-style backups on Windows 10/11 using Robocopy. The project consists of two main components:
+This is a GUI application for creating mirror-style backups. The Windows implementation uses Robocopy; a Linux port using rsync lives alongside it.
+
+Windows (primary):
 
 1. **robocopy.ps1** - Enterprise-grade command-line script with advanced Robocopy functionality
 2. **robocopy-gui.ps1** - Windows Forms GUI wrapper that provides a user-friendly interface
+
+Linux:
+
+3. **rsync-backup.sh** - CLI engine mirroring the same parameter surface
+4. **rsync-gui.sh** - Zenity GUI wrapper
+
+The two platforms are independent implementations and are versioned separately (Windows 2.1.0, Linux 1.0.0).
 
 ## Architecture
 
@@ -16,16 +25,27 @@ This is a PowerShell-based GUI application for creating rsync-style backups on W
 **robocopy.ps1** (Backend Engine)
 - Accepts multiple source folders and one destination folder via positional parameters
 - The last path in `-Paths` is always the destination; all preceding paths are sources
-- Implements parallel processing using PowerShell runspaces when `-Parallel` is specified
-- Supports long paths (>260 characters) via `\\?\` prefix conversion
+- Implements parallel processing when `-Parallel` is specified (see Parallel Execution below)
 - Generates structured output as PSCustomObject for programmatic use
-- Exit codes follow Robocopy conventions: 0-1 (OK), 2-3 (copied), 4-7 (warnings), >7 (errors)
+- Robocopy exit codes are a **bitmask**, not a range: 1 = files copied, 2 = extras
+  present, 4 = mismatches, 8 = copy failures, 16 = fatal. A plain successful copy
+  returns 1, and 0 means nothing needed doing. Do not reintroduce range-based
+  buckets such as `0-1 = success` — that hides every copy behind "Success".
+- Long paths are **not** specially handled. Robocopy accepts >260-character paths
+  natively, and the `\\?\` prefix breaks its path normalization. `Convert-ToLongPath`
+  exists but is deliberately never called; see the note above the destination checks.
 
 **robocopy-gui.ps1** (GUI Frontend)
 - Creates Windows Forms GUI using `System.Windows.Forms` and `System.Drawing`
 - Must be in same directory as robocopy.ps1 (validates existence on startup)
 - Builds command-line arguments from GUI controls and invokes robocopy.ps1
-- Executes the script in a separate PowerShell window using `Start-Process`
+- Executes the script in a separate PowerShell window using
+  `Start-Process powershell.exe -ArgumentList` with `-File`. Do not route this
+  through `cmd.exe /c` or `-Command`: the resulting double parse breaks any path
+  containing a space and lets folder names execute as code.
+- Paths are quoted with `ConvertTo-QuotedArgument`, which doubles a trailing run
+  of backslashes. A trailing `\` before a closing quote is an argv escape, and
+  `FolderBrowserDialog` returns exactly `C:\` for a drive root.
 - All UI text is in English
 
 ### Key Features
@@ -41,12 +61,34 @@ This is a PowerShell-based GUI application for creating rsync-style backups on W
 - Simulates execution without copying or modifying files
 
 **Parallel Execution** (`-Parallel`):
-- Processes multiple source folders concurrently using `ForEach-Object -Parallel`
 - Controlled by `-ThrottleLimit` parameter (default: 4, max: 32)
+- **PowerShell 7+**: `ForEach-Object -Parallel`. A ScriptBlock is bound to the
+  runspace that created it and cannot be passed in via `$using:`, so the body is
+  sent as text and rebuilt with `[scriptblock]::Create()` inside each runspace.
+- **Windows PowerShell 5.1**: falls back to `Start-Job`, throttled by polling
+  job state.
+- Robocopy's own output must never reach the pipeline (see Result Counting).
 
-**Long Path Support**:
-- `Convert-ToLongPath` function prepends `\\?\` to paths if not already present
-- Critical for Windows paths exceeding 260 characters
+**Source Validation**:
+- Exact duplicate source paths are de-duplicated by resolved path, order preserved.
+- Two *different* sources that resolve to the same destination folder name are
+  rejected: both would mirror into one folder and the second `/MIR` would purge
+  the first. Under `-DryRun`/`-Validate` this warns instead of throwing, since
+  those modes never pass `/MIR`.
+- `Get-DestinationFolderName` is the single source of truth for where a source
+  lands. It matches drive roots explicitly, because `Split-Path 'C:\' -Leaf`
+  returns `C:\` rather than an empty string. A drive root maps to `Drive_<letter>`.
+  The name is computed once in the caller and passed into the ScriptBlock so the
+  collision check and the copy cannot disagree.
+
+**Result Counting**:
+- `robocopy @Params | Write-Host` keeps Robocopy's console output off the
+  pipeline. Anything left there is collected alongside the result object, and
+  because `$null -le 1` is true in PowerShell, log lines get counted as folders.
+- Counts are classified once per result using the exit-code bitmask, so the
+  buckets are mutually exclusive and sum to `TotalFolders`.
+- `-FailFast` throws *after* the summary and JSON export, so the failure it
+  exists to record is actually written.
 
 ## Development Commands
 
@@ -84,15 +126,28 @@ This project does not have automated tests. Manual testing approach:
 2. Test with small non-critical folders first
 3. Review generated logs and JSON summaries
 
+When verifying behaviour, build throwaway trees under `$env:TEMP` — never point
+a `/MIR` run at real data. Two techniques that make edge cases cheap to test:
+- `subst X: <tempdir>` gives a real drive root to use as a source, without
+  touching `C:\`. Release it with `subst X: /D`.
+- Copy `robocopy.ps1` into the temp directory before testing `-ExportJson`, so
+  `$PSScriptRoot` puts `robocopy-summary.json` there instead of in the repo.
+
 ## Important Implementation Details
 
 ### Robocopy Parameters (hardcoded in script)
+- `/E` - Copy subdirectories, including empty ones
 - `/XJ` - Excludes junction points
-- `/XF desktop.ini` - Excludes desktop.ini files
+- `/XF` - Excludes `desktop.ini`, `Thumbs.db`, `*.tmp`, `~*`
+- `/XD` - Excludes `$RECYCLE.BIN`, `System Volume Information`, `node_modules`, `site-packages`
+- `/MIR` - Mirror, added only when neither `-Validate` nor `-DryRun` is active
+- `/L` - List only, added for `-Validate` and `-DryRun`
 - `/MT:n` - Multithreading (configurable, default: 16)
 - `/R:2` - Retries on failed copies: 2
 - `/W:2` - Wait time between retries: 2 seconds
 - `/NP` - No progress percentage in log output
+
+The exclusion lists are intentionally fixed and not configurable.
 
 ### Output Files
 - **robocopy.log** - Cumulative log file (when `-Log` is used)
@@ -116,7 +171,9 @@ This project does not have automated tests. Manual testing approach:
 - English is used for all user-facing strings, comments, and UI text
 - PowerShell advanced functions use `[CmdletBinding()]` and proper parameter attributes
 - ScriptBlock pattern is used for parallel execution to ensure proper variable scoping
-- Long paths are handled via dedicated conversion function that checks for existing prefix
+- Values the caller can compute once (such as the destination folder name) are
+  passed into the ScriptBlock rather than re-derived inside it, so validation and
+  execution cannot drift apart
 - GUI uses fixed-size dialog (`FormBorderStyle = "FixedDialog"`, `MaximizeBox = $false`)
 
 ## Requirements

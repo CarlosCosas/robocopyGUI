@@ -149,6 +149,34 @@ if ($null -eq $Paths -or $Paths.Count -eq 0) {
 # =========================
 # Function: Long Path Support
 # =========================
+function Get-DestinationFolderName {
+    <#
+    .SYNOPSIS
+    Returns the folder name a source is mirrored into beneath the destination.
+
+    .DESCRIPTION
+    Single source of truth for the duplicate-name check and the copy itself.
+    Note that Split-Path returns 'C:\' for a drive root rather than an empty
+    string, so roots must be matched explicitly before trusting the leaf.
+    #>
+    param([string]$Path)
+
+    if ($Path -match '^([A-Za-z]):\\?$') {
+        return "Drive_$($matches[1])"
+    }
+
+    $Leaf = Split-Path $Path -Leaf
+
+    if ([string]::IsNullOrWhiteSpace($Leaf)) {
+        throw "Cannot determine a destination folder name for source path: $Path"
+    }
+
+    return $Leaf
+}
+
+# =========================
+# Function: Long Path Support
+# =========================
 function Convert-ToLongPath {
     param([string]$Path)
 
@@ -191,6 +219,38 @@ if ($MissingFolders.Count -gt 0) {
     Throw $ErrorMessage
 }
 
+# The same folder listed twice is redundant intent, not a collision. Drop exact
+# duplicates (order preserved) before looking for genuine name clashes.
+$SeenSources = @{}
+$SourceFolders = @($SourceFolders | Where-Object {
+    $Full = (Resolve-Path $_).Path.TrimEnd('\')
+    if ($SeenSources.ContainsKey($Full)) { $false } else { $SeenSources[$Full] = $true; $true }
+})
+
+# Each source is mirrored into <destination>\<name>, so two different sources
+# resolving to the same name target one folder and the second /MIR purges the
+# first. Get-DestinationFolderName is the same function the copy uses, so the
+# check can never disagree with what actually happens.
+$DuplicateNames = $SourceFolders |
+    Group-Object { Get-DestinationFolderName $_ } |
+    Where-Object { $_.Count -gt 1 }
+
+if ($DuplicateNames) {
+    $Details = $DuplicateNames | ForEach-Object {
+        "  '$($_.Name)' <- " + ($_.Group -join ", ")
+    }
+    $CollisionMessage = "Multiple source folders share the same name and would overwrite each other in the destination:`n" +
+                        ($Details -join "`n")
+
+    # Preview modes use /L and never /MIR, so nothing can be purged: warn only.
+    if ($DryRun -or $Validate) {
+        Write-Warning $CollisionMessage
+    }
+    else {
+        Throw $CollisionMessage
+    }
+}
+
 # Validate destination path
 if ($DestinationRoot -match '[\*\?\<\>\|]') {
     Throw "Destination path contains invalid characters: $DestinationRoot"
@@ -231,7 +291,7 @@ $Results = @()
 # Execution ScriptBlock
 # =========================
 $ScriptBlock = {
-    param($Source, $DestinationRoot, $MT, $Log, $DryRun, $Validate, $LogFile)
+    param($Source, $FolderName, $DestinationRoot, $MT, $Log, $DryRun, $Validate, $LogFile)
 
     # Validate source is not empty
     if ([string]::IsNullOrWhiteSpace($Source)) {
@@ -243,17 +303,11 @@ $ScriptBlock = {
         throw "Destination root is empty or null"
     }
 
-    # Get folder name and validate it's not empty
-    $FolderName = Split-Path $Source -Leaf
-
+    # The destination folder name is supplied by the caller via
+    # Get-DestinationFolderName, so the duplicate-name check and the copy can
+    # never disagree about where a source lands.
     if ([string]::IsNullOrWhiteSpace($FolderName)) {
-        # Handle case where source is a drive root (e.g., C:\)
-        # Extract drive letter or use a fallback name
-        if ($Source -match '^([A-Z]):\\?$') {
-            $FolderName = "Drive_$($matches[1])"
-        } else {
-            throw "Cannot extract folder name from source path: $Source"
-        }
+        throw "Destination folder name is empty for source: $Source"
     }
 
     # Build destination path
@@ -290,7 +344,10 @@ $ScriptBlock = {
 
     if ($Log) { $Params += "/LOG+:`"$LogFile`"" }
 
-    robocopy @Params
+    # Send Robocopy's console output to the host, not down the pipeline.
+    # Anything left on the pipeline is collected alongside the result object
+    # below and counted as a folder in the summary.
+    robocopy @Params | Write-Host
     $ExitCode = $LASTEXITCODE
 
     [PSCustomObject]@{
@@ -302,13 +359,27 @@ $ScriptBlock = {
 # =========================
 # Execution
 # =========================
+# Resolve each destination folder name once, up front, so every execution path
+# copies to exactly the location the duplicate-name check validated.
+$SourceJobs = @($SourceFolders | ForEach-Object {
+    [PSCustomObject]@{
+        Source     = $_
+        FolderName = Get-DestinationFolderName $_
+    }
+})
+
 if ($Parallel) {
 
     # Check PowerShell version for parallel execution support
     if ($PSVersionTable.PSVersion.Major -ge 7) {
-        # PowerShell 7+ supports ForEach-Object -Parallel
-        $Results = $SourceFolders | ForEach-Object -Parallel {
-            & $using:ScriptBlock $_ $using:DestinationRoot $using:MT `
+        # PowerShell 7+ supports ForEach-Object -Parallel.
+        # A ScriptBlock is bound to the runspace that created it and cannot be
+        # passed in via $using:, so send the source text and rebuild it inside.
+        $ScriptBlockText = $ScriptBlock.ToString()
+
+        $Results = $SourceJobs | ForEach-Object -Parallel {
+            $Body = [scriptblock]::Create($using:ScriptBlockText)
+            & $Body $_.Source $_.FolderName $using:DestinationRoot $using:MT `
                 $using:Log $using:DryRun $using:Validate $using:LogFile
         } -ThrottleLimit $ThrottleLimit
     }
@@ -317,8 +388,8 @@ if ($Parallel) {
         Write-Warning "PowerShell 5.1 detected. Using Start-Job for parallel execution (slower than PowerShell 7+)."
 
         $Jobs = @()
-        foreach ($Source in $SourceFolders) {
-            $Job = Start-Job -ScriptBlock $ScriptBlock -ArgumentList $Source, $DestinationRoot, $MT, $Log, $DryRun, $Validate, $LogFile
+        foreach ($Item in $SourceJobs) {
+            $Job = Start-Job -ScriptBlock $ScriptBlock -ArgumentList $Item.Source, $Item.FolderName, $DestinationRoot, $MT, $Log, $DryRun, $Validate, $LogFile
             $Jobs += $Job
 
             # Throttle: wait if we've reached the limit
@@ -336,17 +407,17 @@ if ($Parallel) {
 else {
 
     $i = 0
-    foreach ($Source in $SourceFolders) {
+    foreach ($Item in $SourceJobs) {
 
         $i++
-        $percent = [int](($i / $SourceFolders.Count) * 100)
+        $percent = [int](($i / $SourceJobs.Count) * 100)
 
         Write-Progress `
             -Activity "Processing folders" `
-            -Status "$Source ($i of $($SourceFolders.Count))" `
+            -Status "$($Item.Source) ($i of $($SourceJobs.Count))" `
             -PercentComplete $percent
 
-        $Results += & $ScriptBlock $Source $DestinationRoot $MT `
+        $Results += & $ScriptBlock $Item.Source $Item.FolderName $DestinationRoot $MT `
             $Log $DryRun $Validate $LogFile
     }
 
@@ -356,13 +427,23 @@ else {
 # =========================
 # Results analysis
 # =========================
-$Success = ($Results | Where-Object { $_.ExitCode -le 1 }).Count
-$Changed = ($Results | Where-Object { $_.ExitCode -ge 2 -and $_.ExitCode -le 3 }).Count
-$Warnings = ($Results | Where-Object { $_.ExitCode -ge 4 -and $_.ExitCode -le 7 }).Count
-$Failed = ($Results | Where-Object { $_.ExitCode -gt 7 }).Count
+# Robocopy exit codes are a bitmask, not a range: 1 = files copied,
+# 2 = extra files/dirs present, 4 = mismatches, 8 = copy failures,
+# 16 = fatal error. A plain successful copy returns 1, so a 0-1 "Success"
+# bucket hides every copy and leaves "Changed" permanently at zero.
+# Each result is classified exactly once, so the buckets sum to TotalFolders.
+$Success  = 0
+$Changed  = 0
+$Warnings = 0
+$Failed   = 0
 
-if ($FailFast -and $Failed -gt 0) {
-    Throw "Critical failures detected in execution."
+foreach ($Result in $Results) {
+    $Code = [int]$Result.ExitCode
+
+    if ($Code -ge 8)          { $Failed++ }    # 8 = failures, 16 = fatal
+    elseif ($Code -band 4)    { $Warnings++ }  # mismatched files/dirs
+    elseif ($Code -band 3)    { $Changed++ }   # copied and/or extras present
+    else                      { $Success++ }   # 0 = nothing to do
 }
 
 $EndTime = Get-Date
@@ -394,4 +475,13 @@ if ($ExportJson) {
     $JsonPath = Join-Path $PSScriptRoot "robocopy-summary.json"
     $Summary | ConvertTo-Json -Depth 3 | Out-File $JsonPath -Encoding UTF8
     Write-Host "Summary exported to: $JsonPath"
+}
+
+# =========================
+# Fail-Fast
+# =========================
+# Thrown last, so the summary and the JSON export still record the failure
+# they exist to describe.
+if ($FailFast -and $Failed -gt 0) {
+    Throw "Critical failures detected in execution."
 }

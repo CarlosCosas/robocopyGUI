@@ -23,6 +23,7 @@ $RequiredCLIVersion = "2.1.0"
 # Get script directory
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RobocopyScript = Join-Path $ScriptDir "robocopy.ps1"
+$VerifyScript = Join-Path $ScriptDir "verify-backup.ps1"
 
 # Verify robocopy.ps1 exists
 if (!(Test-Path $RobocopyScript)) {
@@ -131,6 +132,26 @@ function ConvertTo-QuotedArgument {
     param([string]$Path)
 
     '"' + ($Path -replace '(\\*)$', '$1$1') + '"'
+}
+
+function Get-MirroredFolderName {
+    <#
+    .SYNOPSIS
+    Returns the subfolder a source is copied into beneath the destination.
+
+    .DESCRIPTION
+    Must stay in step with Get-DestinationFolderName in robocopy.ps1, otherwise
+    Verify would look in a folder the backup never wrote to. Split-Path returns
+    'C:\' for a drive root rather than an empty string, so roots are matched
+    explicitly.
+    #>
+    param([string]$Path)
+
+    if ($Path -match '^([A-Za-z]):\\?$') {
+        return "Drive_$($matches[1])"
+    }
+
+    return Split-Path $Path -Leaf
 }
 
 # Create form
@@ -361,6 +382,105 @@ $btnExecute.Add_Click({
     }
 })
 $form.Controls.Add($btnExecute)
+
+# Verify button
+$btnVerify = New-Object System.Windows.Forms.Button
+$btnVerify.Location = New-Object System.Drawing.Point(250, 420)
+$btnVerify.Size = New-Object System.Drawing.Size(100, 35)
+$btnVerify.Text = "Verify"
+$btnVerify.Add_Click({
+    # Validation
+    if ($listSource.Items.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "You must add at least one source folder.",
+            "Validation",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+        return
+    }
+
+    if ([string]::IsNullOrWhiteSpace($txtDestination.Text)) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "You must select a destination folder.",
+            "Validation",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+        return
+    }
+
+    if (!(Test-Path $VerifyScript)) {
+        [System.Windows.Forms.MessageBox]::Show(
+            "Cannot find verify-backup.ps1 in the same directory.`n`nExpected path: $VerifyScript",
+            "Error",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Error
+        )
+        return
+    }
+
+    # Each source is verified against the subfolder the backup copied it into.
+    $pairs = @()
+    $missingTargets = @()
+
+    foreach ($source in $listSource.Items) {
+        $mirrored = Join-Path $txtDestination.Text (Get-MirroredFolderName $source)
+
+        if (Test-Path $mirrored -PathType Container) {
+            $pairs += [PSCustomObject]@{ Source = $source; Target = $mirrored }
+        }
+        else {
+            $missingTargets += $mirrored
+        }
+    }
+
+    if ($missingTargets.Count -gt 0) {
+        $warning = "These destination folders do not exist yet, so they cannot be verified:`n`n" +
+                   ($missingTargets -join "`n") +
+                   "`n`nRun the backup first."
+
+        if ($pairs.Count -eq 0) {
+            [System.Windows.Forms.MessageBox]::Show(
+                $warning, "Nothing to verify",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Warning
+            )
+            return
+        }
+
+        [System.Windows.Forms.MessageBox]::Show(
+            $warning + "`n`nThe remaining $($pairs.Count) will still be checked.",
+            "Some folders missing",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        )
+    }
+
+    # One window per pair, so say so before opening several at once.
+    $listing = ($pairs | ForEach-Object { "  $($_.Source)`n    -> $($_.Target)" }) -join "`n"
+    $message = "Verify these folders by checksum?`n`n$listing`n`n" +
+               "$($pairs.Count) PowerShell window(s) will open, one per folder."
+
+    $result = [System.Windows.Forms.MessageBox]::Show(
+        $message,
+        "Confirm verification",
+        [System.Windows.Forms.MessageBoxButtons]::YesNo,
+        [System.Windows.Forms.MessageBoxIcon]::Question
+    )
+
+    if ($result -eq "Yes") {
+        foreach ($pair in $pairs) {
+            $verifyArgs = "-NoExit -NoProfile -ExecutionPolicy Bypass -File " +
+                          (ConvertTo-QuotedArgument $VerifyScript) + " " +
+                          (ConvertTo-QuotedArgument $pair.Source) + " " +
+                          (ConvertTo-QuotedArgument $pair.Target)
+
+            Start-Process "powershell.exe" -ArgumentList $verifyArgs
+        }
+    }
+})
+$form.Controls.Add($btnVerify)
 
 # Cancel button
 $btnCancel = New-Object System.Windows.Forms.Button

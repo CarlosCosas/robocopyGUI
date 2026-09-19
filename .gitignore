@@ -49,3 +49,4 @@ desktop.ini
 testResults.xml
 coverage.xml
 /robocopy-summary.json
+/verify-summary.json

@@ -55,12 +55,10 @@ The two platforms are independent implementations and are versioned separately (
 **Mirror Mode**: Uses Robocopy's `/MIR` flag by default (unless `-Validate` or `-DryRun` is active)
 - Mirrors source to destination, deleting files that don't exist in source
 
-**Validation Mode** (`-Validate`):
-- Prevents actual mirroring/deletion by using `/L` flag
-- Allows analysis of differences before running actual copy
-
-**DryRun Mode** (`-DryRun`):
-- Simulates execution without copying or modifying files
+**Validation Mode** (`-Validate`) and **DryRun Mode** (`-DryRun`):
+- Equivalent: both add `/L` and change nothing on disk
+- `/MIR` stays on, so the listing includes the destination files that would be
+  deleted (`*EXTRA`), not just the files that would be copied
 
 **Parallel Execution** (`-Parallel`):
 - Controlled by `-ThrottleLimit` parameter (default: 4, max: 32)
@@ -153,8 +151,12 @@ a `/MIR` run at real data. Two techniques that make edge cases cheap to test:
 - `/XJ` - Excludes junction points
 - `/XF` - Excludes `desktop.ini`, `Thumbs.db`, `*.tmp`, `~*`
 - `/XD` - Excludes `$RECYCLE.BIN`, `System Volume Information`, `node_modules`, `site-packages`
-- `/MIR` - Mirror, added only when neither `-Validate` nor `-DryRun` is active
-- `/L` - List only, added for `-Validate` and `-DryRun`
+- `/MIR` - Mirror. **Always present, including in preview modes.** Without it a
+  preview runs without `/PURGE` and reports only what would be copied, hiding
+  the deletions a real run would perform. `/L` is what makes a preview safe.
+- `/L` - List only, added for `-Validate` and `-DryRun`. Robocopy reports its
+  intentions and writes nothing, so extras appear as `*EXTRA` instead of being
+  deleted.
 - `/MT:n` - Multithreading (configurable, default: 16)
 - `/R:2` - Retries on failed copies: 2
 - `/W:2` - Wait time between retries: 2 seconds

@@ -103,6 +103,7 @@ The GUI allows you to:
 3. **Configure options** - Enable dry run, validation, parallel execution, logging, etc.
 4. **Adjust settings** - Configure threading (Windows) or parallel limit (Linux)
 5. **Execute** - Run the backup operation
+6. **Verify** (Windows) - Checksum every source folder against the copy the backup made of it, opening one window per folder
 
 ### Command-Line Interface
 
@@ -217,6 +218,43 @@ Because of that naming, two different sources with the same folder name (for exa
 **Sync without deleting (disable mirror mode):**
 ```bash
 ./rsync-backup.sh /home/user/docs /backup --no-delete --log --export-json
+```
+
+### Verifying a Backup (Windows)
+
+`verify-backup.ps1` confirms by checksum that a copy actually arrived intact.
+
+```powershell
+.\verify-backup.ps1 <source> <target> [options]
+```
+
+Pass the **mirrored folder itself**, not the backup root — to verify `C:\projA\docs`, pass `D:\BAK\docs`.
+
+The check is one-directional: every file under the source must exist in the target with matching contents. Files present only in the target are ignored, because several sources may have been mirrored into the same backup folder. Files Robocopy was told to skip are excluded by default, so they are not reported as missing.
+
+Each file is compared by size first and hashed only if the sizes match.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `source` | positional | (required) | Folder whose files must be present in the target |
+| `target` | positional | (required) | Folder the source was copied into |
+| `-Algorithm` | SHA256 \| MD5 | SHA256 | Hash algorithm; MD5 is faster and fine for detecting corruption |
+| `-All` | switch | off | Also check files the Robocopy exclusion lists would have skipped |
+| `-MaxListed` | int | 5 | How many problem files to list before switching to a percentage summary |
+| `-ExportJson` | switch | off | Write `verify-summary.json`, including the full problem list |
+| `-Version` | switch | - | Display script version and exit |
+
+Up to `-MaxListed` problems are listed individually; beyond that you get a percentage warning instead. Exit code is `0` when everything verified and `1` when anything was missing or different.
+
+**Verify what you just backed up:**
+```powershell
+.\robocopy.ps1 C:\Documents D:\Backup
+.\verify-backup.ps1 C:\Documents D:\Backup\Documents
+```
+
+**Faster check of a large tree, with a full report:**
+```powershell
+.\verify-backup.ps1 C:\Data D:\Backup\Data -Algorithm MD5 -ExportJson
 ```
 
 ## How It Works

@@ -11,10 +11,12 @@ Windows (primary):
 1. **robocopy.ps1** - Enterprise-grade command-line script with advanced Robocopy functionality
 2. **robocopy-gui.ps1** - Windows Forms GUI wrapper that provides a user-friendly interface
 
+3. **verify-backup.ps1** - Standalone checksum verifier for a completed copy
+
 Linux:
 
-3. **rsync-backup.sh** - CLI engine mirroring the same parameter surface
-4. **rsync-gui.sh** - Zenity GUI wrapper
+4. **rsync-backup.sh** - CLI engine mirroring the same parameter surface
+5. **rsync-gui.sh** - Zenity GUI wrapper
 
 The two platforms are independent implementations and are versioned separately (Windows 2.1.0, Linux 1.0.0).
 
@@ -89,6 +91,17 @@ The two platforms are independent implementations and are versioned separately (
   buckets are mutually exclusive and sum to `TotalFolders`.
 - `-FailFast` throws *after* the summary and JSON export, so the failure it
   exists to record is actually written.
+
+**verify-backup.ps1** (Verifier)
+- Independent of robocopy.ps1; verifies any completed copy, not just this tool's
+- Takes the mirrored folder as the target, not the backup root
+- **The check is one-directional by design.** Several sources may be mirrored
+  into one backup folder, so files present only in the target are ignored.
+  Do not "fix" this into a symmetric diff.
+- Applies the same exclusion lists as robocopy.ps1, otherwise every skipped
+  `desktop.ini` and `*.tmp` would be reported as missing. `-All` overrides.
+- Compares size first, hashes only when sizes agree
+- Exits 1 when anything failed to verify, unlike robocopy.ps1 which always exits 0
 
 ## Development Commands
 
@@ -165,6 +178,12 @@ The exclusion lists are intentionally fixed and not configurable.
 | Fail-Fast checkbox | `-FailFast` |
 | Robocopy threads (MT) numeric | `-MT` |
 | Parallel limit (folders) numeric | `-ThrottleLimit` |
+
+The **Verify** button is not part of that mapping: it invokes `verify-backup.ps1`
+once per source folder, pairing each source with `<destination>\<mirrored name>`.
+`Get-MirroredFolderName` in the GUI must stay in step with
+`Get-DestinationFolderName` in robocopy.ps1, or Verify will look in a folder the
+backup never wrote to.
 
 ## Code Conventions
 
